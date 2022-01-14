@@ -1,31 +1,6 @@
 
-#include <stdio.h>
-#include <string.h>
+#include "./tar_function.h"
 
-#include <stdlib.h>
-#include <stdbool.h>
-
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <zlib.h>
-
-
-#define BUFFER_SIZE     (1024)
-#define READ_SIZE       (128)
-
-#define TAR_OPTION_Z    (1 << 0)
-#define TAR_OPTION_X    (1 << 1)
-#define TAR_OPTION_FLAG (1 << 2)
-#define TAR_OPTION_C    (1 << 3)
-#define TAR_OPTION_N    (1 << 4)
-
-#define OPTION_C_DEFAULT_FILE_NAME  ("Option_c_test")
-#define OPTION_Z_DEFAULT_FILE_NAME  ("Option_z_test")
-
-
-int Get_Option(int argc, char **argv);
 
 
 int main(int argc, char *argv[])
@@ -36,6 +11,8 @@ int main(int argc, char *argv[])
     int nFile_out = 0;
     int nFile_arg = 0;
     int nFile_temp = 0;
+    int nFile_option_z = 0;
+    int nReturn_Value = 0;
 
     unsigned int nFile_Size = 0;
     unsigned int nWrite_Size = 0;
@@ -57,6 +34,26 @@ int main(int argc, char *argv[])
     char pOption_z_File_Name[1024] = { 0, };
 
     struct stat sb;
+
+    char pBackup_Working_Directory[100] = { 0, };
+    unsigned short nDirectory_Cnt = 0;
+
+#if 1 // struct test
+    File_Info File_Info;
+    memset( &File_Info, 0x00, sizeof(File_Info) );
+#endif
+
+#if 1 // compress, uncompress test
+
+    Byte deflate_data[DBUF] = { 0, };
+    uLong deflate_size = DBUF;
+
+    Byte inflate_data[BUF] = { 0, };
+    uLong inflate_size = BUF;
+
+    // test
+    int nTest_Return_Value = 0;
+#endif
 
 
     if( argc > 1 )
@@ -103,6 +100,7 @@ int main(int argc, char *argv[])
             if( nOption & TAR_OPTION_Z )
             {
                 nFile_out = open("Option_z_temp_file", O_RDWR | O_CREAT | O_TRUNC, 0644);
+                nFile_option_z = open("Option_z_test_file", O_RDWR | O_CREAT | O_TRUNC, 0644);
             }
             else
             {
@@ -116,10 +114,51 @@ int main(int argc, char *argv[])
             }
         }
 
+        getcwd(pBackup_Working_Directory, 100);
+                            
         while( nFile_Count != argc )
         {
+#if 1 // struct test            
+            // initialize struct
+            //memset( &File_Info, 0x00, sizeof(File_Info) );
+#endif            
+
             if( nOption > TAR_OPTION_FLAG ) // Option c
             {
+#if 1 // function test
+                chdir(pBackup_Working_Directory);
+
+                if( stat(argv[nFile_Count], &sb) == -1 )
+                {
+                    perror("fstat error_main\n");
+                }
+
+                if( Check_File_Type(sb) ) // directory
+                {
+                    nDirectory_Cnt++;
+
+                    Create_Archive_Directory( argv[nFile_Count], nFile_out, 0, NULL );   
+
+                    nReturn_Value = Check_Directory( argv[nFile_Count], nFile_out, 1 );
+                    if( nReturn_Value == -1 ) // Error opening directory
+                    {
+                        nFile_Count++;
+                        continue;
+                    }
+                }
+                else // file
+                {
+                    nReturn_Value = Create_Archive(argv[nFile_Count], nFile_out, (nOption & TAR_OPTION_Z), 0, NULL);
+                    if( nReturn_Value == -1 )
+                    {
+                        nFile_Count++;
+                        continue;
+                    }
+                }
+
+                nFile_Count++;
+
+#else
                 nFile_arg = open( argv[nFile_Count], O_RDONLY);
                 if( nFile_arg == -1 )
                 {
@@ -133,6 +172,18 @@ int main(int argc, char *argv[])
                     perror("fstat error\n");
                 }
 
+#if 1 // struct test
+                // file name
+                snprintf( File_Info.pName, 128, "%s", argv[nFile_Count] );
+                // file size
+                File_Info.nSize = sb.st_size;
+                nFile_Size = File_Info.nSize;
+
+                memcpy( pBuffer_tar, &File_Info, sizeof(File_Info) );
+
+                write( nFile_out, pBuffer_tar, sizeof(File_Info) );
+                memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
+#else
                 /*  "file name" + "\" at the beginning of file  */
                 sprintf( pBuffer_tar, "%s\\", argv[nFile_Count] );
                 nWrite_Size += strlen(pBuffer_tar); // File name
@@ -148,6 +199,7 @@ int main(int argc, char *argv[])
 
                 /*  nFile_Size = strlen("file name" + "\" + "file size" + "\") + original file size  */
                 nFile_Size += nWrite_Size;
+#endif
 
                 while( ( nActual_Read_Size = read(nFile_arg, pBuffer_tar + nWrite_Size, READ_SIZE) ) > 0 )
                 {                
@@ -171,6 +223,7 @@ int main(int argc, char *argv[])
 
                 nFile_Count++;         
                 close(nFile_arg);   
+#endif                
             }
             else if( nOption < TAR_OPTION_FLAG ) // Option x
             {
@@ -178,6 +231,90 @@ int main(int argc, char *argv[])
 
                 if( nOption & TAR_OPTION_Z ) // Option x + z
                 {
+#if 1 // compress test                    
+                    nFile_arg = open( argv[nFile_Count], O_RDONLY);
+                    if( nFile_arg == -1 )
+                    {
+                        printf("> [nFile_arg] Error : Could not open file.\n");
+                        nFile_Count++;
+                        continue;
+                    }
+
+                    nFile_temp = open("Option_z_temp_file", O_RDWR | O_CREAT | O_TRUNC, 0644);
+                    if( nFile_temp == -1 )
+                    {
+                        printf("> [nFile_temp] Error : Could not open file.\n");
+                        return -1;
+                    }
+
+                    if( stat(argv[nFile_Count], &sb) == -1 )
+                    {
+                        perror("fstat error\n");
+                    }
+
+                    // file size
+                    nFile_Size = sb.st_size;
+
+                    // if( nRead_Size > nFile_Size )
+                    // {
+                    //     nRead_Size = nFile_Size;
+                    // }
+                    
+                    while( (nActual_Read_Size = read(nFile_arg, pBuffer_tar + nWrite_Size, nRead_Size)) > 0 )
+                    {
+
+                        nWrite_Size += nActual_Read_Size;
+
+                        // check next reading         
+                        if( nWrite_Size + READ_SIZE >= nFile_Size )
+                        {
+                            nRead_Size = nFile_Size - nWrite_Size;
+                            bReadEnd_Flag = true;
+                        }
+
+                        printf("nWrite_Size[%d], nFile_Size[%d], nActual_Read_Size[%d], nRead_Size[%d]\n", nWrite_Size, nFile_Size, nActual_Read_Size, nRead_Size);
+
+                        if(    (nWrite_Size >= BUFFER_SIZE)
+                            || (nFile_Size == nWrite_Size)
+                        )
+                        {
+                            printf("@@@@@@@@@@ Temp File Write @@@@@@@@@@@\n");
+                            
+                            // test
+                            uncompress(inflate_data, &inflate_size, pBuffer_tar, nWrite_Size);
+                            //nTest_Return_Value = uncompress(inflate_data, &inflate_size, pBuffer_tar, nWrite_Size);
+
+                            //nTest_Return_Value = uncompress(inflate_data, &inflate_size, pBuffer_tar, nWrite_Size);
+
+                            printf("sizeof(inflate_data)[%d]\n", sizeof(inflate_data));
+                            printf("nTest_Return_Value[%d]\n", nTest_Return_Value);
+
+                            // test
+                            printf("nWrite_Size[%d]\n", nWrite_Size);           
+                            printf("inflate_size[%d]\n", inflate_size);           
+
+                            write( nFile_temp, inflate_data, inflate_size );
+
+                            // test
+                            memset( inflate_data, 0x00, sizeof(inflate_data) );
+                            inflate_size = BUF;
+
+                            memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
+                            nFile_Size -= nWrite_Size;
+                            nWrite_Size = 0;
+                            nRead_Size = READ_SIZE;
+
+
+                            if( bReadEnd_Flag )
+                            {
+                                bReadEnd_Flag = false;
+                                close(nFile_out);
+
+                                break;
+                            }
+                        }
+                    }
+#else
                     zfp = gzopen( argv[nFile_Count], "rb" );
                     if( zfp == NULL )
                     {
@@ -196,13 +333,42 @@ int main(int argc, char *argv[])
                     {
                         write( nFile_temp, z_buffer, strlen(z_buffer) );
                     }
-
+                    
+#endif                    
+                    // test
+                    //return -1;
+                    
                     lseek( nFile_temp, 0, SEEK_SET ); // Go to beginning of file
 
                     while(1)
                     {
                         memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
 
+#if 1 // struct test
+                        // struct
+                        if( !(read(nFile_temp, pBuffer_tar, sizeof(File_Info))) )
+                        {
+                            /*  when next file not exist  */
+                            break;
+                        }
+
+                        memcpy( &File_Info, pBuffer_tar, sizeof(File_Info) );
+
+                        // test
+                        printf("File Name : %s\n", File_Info.pName);
+                        printf("File Size : %d\n", File_Info.nSize);
+
+                        nFile_out = open(File_Info.pName, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        if( nFile_out == -1 )
+                        {
+                            printf("> [nFile_out] Error : Could not open file.\n");
+                            return -1;
+                        }
+
+                        nFile_Size = File_Info.nSize;
+
+                        memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
+#else
                         /*  Read file to find file name, file size  */
                         if( !(read(nFile_temp, pBuffer_tar, 512)) )
                         {
@@ -251,6 +417,7 @@ int main(int argc, char *argv[])
                         nContentsStartPoint += nFile_Size; // for next create file
                         
                         memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
+#endif
 
                         if( nRead_Size > nFile_Size )
                         {
@@ -301,6 +468,8 @@ int main(int argc, char *argv[])
                 }
                 else // Option x
                 {
+                    //getcwd(pBackup_Working_Directory, 100);
+
                     nFile_arg = open( argv[nFile_Count], O_RDONLY);
                     if( nFile_arg == -1 )
                     {
@@ -313,6 +482,52 @@ int main(int argc, char *argv[])
                     {
                         memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
 
+#if 1 // struct test
+                        // struct
+                        if( !(read(nFile_arg, pBuffer_tar, sizeof(File_Info))) )
+                        {
+                            /*  when next file not exist  */
+                            break;
+                        }
+
+                        memcpy( &File_Info, pBuffer_tar, sizeof(File_Info) );
+
+                        if( File_Info.nDirectory_Depth == 0 )
+                        {
+                            chdir(pBackup_Working_Directory);
+                        }
+
+                        // directory
+                        if(     (File_Info.nKind == KIND_DIRECTORY)
+                            ||  (File_Info.nDirectory_Depth != 0)
+                        )
+                        {
+                            nReturn_Value = Extract_Archive_Directory( &File_Info );
+                            if( nReturn_Value == KIND_DIRECTORY )
+                            {
+                                continue;                                
+                            }
+                        }
+                        // else if( File_Info.nDirectory_Depth == 0 )
+                        // {
+                        //     chdir(pBackup_Working_Directory);
+                        // }
+
+                        // test
+                        printf("File Name : %s\n", File_Info.pName);
+                        printf("File Size : %d\n", File_Info.nSize);
+
+                        nFile_out = open(File_Info.pName, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        if( nFile_out == -1 )
+                        {
+                            printf("> [nFile_out] Error : Could not open file.\n");
+                            return -1;
+                        }
+
+                        nFile_Size = File_Info.nSize;
+
+                        memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
+#else
                         /*  Read file to find file name, file size  */
                         if( !(read(nFile_arg, pBuffer_tar, 512)) )
                         {
@@ -361,6 +576,7 @@ int main(int argc, char *argv[])
                         nContentsStartPoint += nFile_Size; // for next create file
                         
                         memset( pBuffer_tar, 0x00, sizeof(pBuffer_tar) );
+#endif
 
                         if( nRead_Size > nFile_Size )
                         {
@@ -420,112 +636,62 @@ int main(int argc, char *argv[])
             {
                 lseek( nFile_out, 0, SEEK_SET ); // Go to beginning of file
 
-                if( nOption & TAR_OPTION_N )
-                {
-                    zfp = gzopen(pOption_z_File_Name, "wb");
-                }
-                else
-                {
-                    zfp = gzopen(OPTION_Z_DEFAULT_FILE_NAME, "wb");
-                }
+                // if( nOption & TAR_OPTION_N )
+                // {
+                //     zfp = gzopen(pOption_z_File_Name, "wb");
+                // }
+                // else
+                // {
+                //     zfp = gzopen(OPTION_Z_DEFAULT_FILE_NAME, "wb");
+                // }
                 
-                if( zfp == NULL )
-                {
-                    printf("> Error : gzopen error\n");
-                    return 0;
-                }
+                // if( zfp == NULL )
+                // {
+                //     printf("> Error : gzopen error\n");
+                //     return 0;
+                // }
 
                 while( (nOption_z_Read_Size = read(nFile_out, z_buffer, BUFFER_SIZE)) > 0 )
                 {
+#if 1 // Modify zip
+                    printf("nOption_z_Read_Size : %d\n", nOption_z_Read_Size);
+
+                    compress(deflate_data, &deflate_size, z_buffer, nOption_z_Read_Size);
+
+                    // test
+                    printf("deflate_size : %d\n", deflate_size);
+
+                    write(nFile_option_z, deflate_data, deflate_size);
+                    
+                    // test
+                    //uncompress(inflate_data, &inflate_size, deflate_data, deflate_size);
+                    //printf("inflate_data : %s\n", inflate_data);
+
+                    memset( z_buffer, 0x00, sizeof(z_buffer) );
+                    memset( deflate_data, 0x00, sizeof(deflate_data) );
+                    memset( inflate_data, 0x00, sizeof(inflate_data) );
+#else
                     if( gzwrite(zfp, z_buffer, nOption_z_Read_Size) < 0 )
                     {
                         printf("> Error : gzwrite error\n");
                         return 0;
                     }
+
+                    memset( z_buffer, 0x00, sizeof(z_buffer) );
+#endif                    
                 }
                 
-                gzclose(zfp);
+                //gzclose(zfp);
 
                 remove("Option_z_temp_file");
             }
 #endif            
             close(nFile_out);
+            close(nFile_option_z);
         }
     }
     else
     {
         printf("\n> Please enter option & file name.\n");
     }
-}
-
-
-
-/*  function part  */
-
-int Get_Option(int argc, char **argv)
-{
-    int nGetOption = 0;
-    int nOption = 0;
-
-    while( (nGetOption = getopt(argc, argv, "xcnz")) != -1 )
-    {
-        switch( nGetOption )
-        {
-            case 'x':
-                if(     (nOption & TAR_OPTION_C)
-                    ||  (nOption & TAR_OPTION_N)
-                )
-                {
-                    printf("> Error : option\n");
-                    return 0;
-                }
-                else
-                {
-                    if( !(nOption & TAR_OPTION_X) )
-                    {
-                        nOption += TAR_OPTION_X;
-                    }
-                }
-                break;
-
-            case 'c':
-                if( nOption & TAR_OPTION_X )
-                {
-                    printf("> Error : option\n");
-                    return 0;
-                }
-                else
-                {
-                    if( !(nOption & TAR_OPTION_C) )
-                    {
-                        nOption += TAR_OPTION_C;
-                    }
-                }
-                break;
-
-            case 'n':
-                if( nOption & TAR_OPTION_X )
-                {
-                    printf("> Error : option\n");
-                    return 0;
-                }
-                else
-                {
-                    if( !(nOption & TAR_OPTION_N) )
-                    {
-                        nOption += TAR_OPTION_N;
-                    }
-                }
-                break;
-
-            case 'z':
-                if( !(nOption & TAR_OPTION_Z) )
-                {
-                    nOption += TAR_OPTION_Z;
-                }
-                break;
-        }
-    }
-
-    return nOption;
 }
